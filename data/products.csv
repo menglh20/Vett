@@ -1,0 +1,38 @@
+ticker,name,product_type,risk_level,is_long_term,is_illiquid
+AAPL,Apple Inc.,stock,4,False,False
+MSFT,Microsoft Corporation,stock,4,False,False
+GOOGL,Alphabet Inc.,stock,4,False,False
+AMZN,Amazon.com Inc.,stock,4,False,False
+META,Meta Platforms Inc.,stock,4,False,False
+NVDA,NVIDIA Corporation,stock,4,False,False
+TSLA,"Tesla, Inc.",stock,4,False,False
+JPM,JPMorgan Chase & Co.,stock,4,False,False
+JNJ,Johnson & Johnson,stock,4,False,False
+PG,Procter & Gamble Co.,stock,4,False,False
+VOO,Vanguard S&P 500 ETF,etf,4,False,False
+VTI,Vanguard Total Stock Market ETF,etf,4,False,False
+QQQ,Invesco QQQ Trust,etf,4,False,False
+VGT,Vanguard Info Tech ETF,etf,4,False,False
+SCHG,Schwab U.S. Large-Cap Growth ETF,etf,4,False,False
+IWM,iShares Russell 2000 ETF,etf,4,False,False
+BND,Vanguard Total Bond Market ETF,bond,2,False,False
+AGG,iShares Core U.S. Aggregate Bond ETF,bond,2,False,False
+TLT,iShares 20+ Year Treasury Bond ETF,bond,2,False,False
+LQD,iShares Investment Grade Corporate Bond ETF,bond,2,False,False
+BTC,Bitcoin,crypto,5,False,False
+ETH,Ethereum,crypto,5,False,False
+SOL,Solana,crypto,5,False,False
+VMMXX,Vanguard Federal Money Market Fund,money_market,2,False,False
+SPAXX,Fidelity Government Money Market Fund,money_market,2,False,False
+CD6M,6-Month Certificate of Deposit,deposit,1,False,False
+CD1Y,1-Year Certificate of Deposit,deposit,1,True,False
+VFIAX,Vanguard 500 Index Fund,fund,4,True,True
+FXAIX,Fidelity 500 Index Fund,fund,4,True,True
+PIMIX,PIMCO Income Fund,fund,4,True,True
+BRKVP,Berkshire Private Equity Fund,private_equity,5,True,True
+KKRPE,KKR Global Private Equity Fund,private_equity,5,True,True
+BLKPE,BlackRock Private Equity Fund,private_equity,5,True,True
+NWLI,Nationwide Life Insurance Savings Plan,savings_insurance,1,True,True
+PRULI,Prudential Savings Insurance,savings_insurance,1,True,True
+MIXLO,Conservative Balanced Fund,mixed_low,3,False,False
+MIXMD,Moderate Growth Balanced Fund,mixed_medium,3,False,False
