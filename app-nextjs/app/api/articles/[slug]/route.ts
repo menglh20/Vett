@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { MOCK_ARTICLES } from "@/app/api/articles/route";
+import { MOCK_ARTICLES } from "@/lib/articles";
 
 export async function GET(
   _req: Request,
