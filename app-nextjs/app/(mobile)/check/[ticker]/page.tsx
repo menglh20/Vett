@@ -27,7 +27,12 @@ export default function CheckPage() {
   const [data, setData] = useState<CheckResponse | null>(null);
 
   useEffect(() => {
-    if (ticker) fetch(`/api/check/${ticker}`).then(r => r.json()).then(setData);
+    if (ticker) {
+      const investorId = localStorage.getItem("vett_investor_id") ?? "";
+      fetch(`/api/check/${ticker}?investor_id=${encodeURIComponent(investorId)}`)
+        .then(r => r.json())
+        .then(setData);
+    }
   }, [ticker]);
 
   if (!data) {
