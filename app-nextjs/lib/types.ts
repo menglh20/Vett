@@ -28,6 +28,7 @@ export interface DimensionData {
 
 export interface ProfileResponse {
   fitnessScore: number;
+  headline: string;
   summary: string;
   signals: BehavioralSignals;
   dimensions: DimensionData[];

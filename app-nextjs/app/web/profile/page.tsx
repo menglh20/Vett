@@ -45,7 +45,7 @@ export default function WebProfilePage() {
               </div>
               <FitnessProgressBar value={profile?.fitnessScore ?? 0} height={8} />
               <p className="mt-4" style={{ fontFamily: "var(--font-outfit)", fontSize: "15px", color: "#888888", lineHeight: "1.5" }}>
-                You tend to be more conservative than you think.
+                {profile?.headline ?? "Loading…"}
               </p>
             </div>
 

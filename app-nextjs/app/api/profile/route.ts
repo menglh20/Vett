@@ -78,6 +78,57 @@ function tierLabel(tier: "fit" | "caution" | "mismatch"): string {
   return tier === "fit" ? "Fit" : tier === "caution" ? "Caution" : "Likely Mismatch";
 }
 
+// ─── Headline generation ────────────────────────────────────────────────────
+
+/** Templates per dimension; tuple = [self > obs message, self < obs message] */
+const HEADLINE_TEMPLATES: Record<string, [string, string]> = {
+  "Risk Tolerance": [
+    "You tend to be more conservative than you think.",
+    "Your data shows more risk capacity than your self-rating suggests.",
+  ],
+  "Holding Patience": [
+    "You say long-term but your data shows short hold periods.",
+    "You hold positions longer than your stated horizon suggests.",
+  ],
+  "Decision Independence": [
+    "Your buys are more externally influenced than you'd estimate.",
+    "You're more independent in your decisions than you think.",
+  ],
+  "Volatility Comfort": [
+    "You exit positions earlier than your loss tolerance suggests.",
+    "You weather drawdowns better than your stated tolerance.",
+  ],
+  "Liquidity Readiness": [
+    "You flagged short-term cash needs but still hold illiquid products.",
+    "Your liquidity discipline is better than your stated need suggests.",
+  ],
+};
+
+/** Pick the dimension with the largest meaningful gap. */
+function generateHeadline(dimensions: DimensionData[]): string {
+  // Skip dims where both self and obs are healthy (≥70) — no real concern
+  const concerning = dimensions.filter(
+    (d) => !(d.selfValue >= 70 && d.observedValue >= 70)
+  );
+
+  let topDim: DimensionData | null = null;
+  let topGap = 0;
+  for (const d of concerning) {
+    const gap = Math.abs(d.selfValue - d.observedValue);
+    if (gap > topGap) {
+      topGap = gap;
+      topDim = d;
+    }
+  }
+
+  if (!topDim || topGap < 15) {
+    return "Your self-assessment matches your behavior.";
+  }
+
+  const [overText, underText] = HEADLINE_TEMPLATES[topDim.name] ?? ["", ""];
+  return topDim.selfValue > topDim.observedValue ? overText : underText;
+}
+
 // ─── Summary generation ─────────────────────────────────────────────────────
 
 function generateSummary(
@@ -227,6 +278,7 @@ export async function GET(req: NextRequest) {
 
     const profile: ProfileResponse = {
       fitnessScore: signals.fitnessScore,
+      headline: generateHeadline(dimensions),
       summary: generateSummary(signals, tierLabel(signals.tier)),
       signals: {
         medianHoldDays: Math.round(m.medianHoldDays),
@@ -249,6 +301,7 @@ export async function GET(req: NextRequest) {
 
 const MOCK_PROFILE: ProfileResponse = {
   fitnessScore: 62,
+  headline: "You say long-term but your data shows short hold periods.",
   summary:
     "Your biggest gap is between your stated holding patience and actual behavior — you say long-term but your median hold is 47 days. You also tend to exit positions early during small dips, suggesting your real volatility comfort is lower than you rated. On the positive side, your decision independence is strong — most of your trades are self-directed.",
   signals: {

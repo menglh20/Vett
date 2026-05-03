@@ -55,7 +55,7 @@ export default function HomePage() {
             </div>
             <FitnessProgressBar value={profile?.fitnessScore ?? 0} />
             <p className="mt-3" style={{ fontFamily: "var(--font-outfit)", fontSize: "13px", fontWeight: 400, color: "#888888" }}>
-              {profile ? "You tend to be more conservative than you think." : "Loading your profile…"}
+              {profile ? profile.headline : "Loading your profile…"}
             </p>
           </div>
         </div>
