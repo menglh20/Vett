@@ -1,22 +1,60 @@
 import { NextRequest, NextResponse } from "next/server";
-import { computeSignals, type SignalLevel } from "@/lib/signals";
+import { computeSignals } from "@/lib/signals";
 import { createServiceClient } from "@/lib/supabase";
 import type { ProfileResponse, DimensionData, DimensionLevel } from "@/lib/types";
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Value mappers (all return 0–100, higher = stronger on that axis) ───────
 
-/** Map signal level → dimension display level (inverted: high signal = low observed) */
-function invertLevel(level: SignalLevel): DimensionLevel {
-  return level === "high" ? "Low" : level === "medium" ? "Medium" : "High";
+/** R1=20, R2=40, R3=60, R4=80, R5=100 */
+function riskToValue(r: number | null): number {
+  return (r ?? 3) * 20;
 }
 
-/** Map signal level → observed value for radar chart (inverted) */
-function invertValue(level: SignalLevel): number {
-  return level === "high" ? 20 : level === "medium" ? 50 : 80;
+/** Stated horizon → 0–100 (longer = higher) */
+function horizonToValue(h: string | null): number {
+  const map: Record<string, number> = { "<6m": 20, "6m-1y": 40, "1-3y": 60, "3-5y": 80, "5y+": 95 };
+  return map[h ?? "<6m"] ?? 20;
 }
 
-/** Map a self-reported number to a DimensionLevel */
-function selfLevel(value: number): DimensionLevel {
+/** Median hold days → 0–100, on the same axis as horizon */
+function holdDaysToValue(d: number): number {
+  if (d < 30) return 10;
+  if (d < 180) return 25;
+  if (d < 365) return 45;
+  if (d < 1095) return 65;
+  if (d < 1825) return 80;
+  return 95;
+}
+
+/** Investment experience years → 0–100 base score */
+function expToValue(years: number | null): number {
+  if (years === null || years <= 0) return 20;
+  if (years === 1) return 35;
+  if (years <= 3) return 55;
+  if (years <= 5) return 75;
+  return 90;
+}
+
+/** Financial literacy → bonus added to experience score */
+function litBonus(lit: string | null): number {
+  if (lit === "high") return 10;
+  if (lit === "low") return -10;
+  return 0;
+}
+
+/** Stated max loss percentage → 0–100 (higher tolerance = higher comfort) */
+function lossToValue(loss: number | null): number {
+  const map: Record<number, number> = { 0: 20, 5: 40, 10: 60, 20: 80, 50: 95 };
+  return map[loss ?? 10] ?? 60;
+}
+
+/** Short-term cash need → 0–100 (higher = better liquidity buffer) */
+function cashNeedToValue(need: boolean): number {
+  return need ? 30 : 80;
+}
+
+/** Numeric value → DimensionLevel label */
+function valueToLevel(value: number): DimensionLevel {
   if (value >= 70) return "High";
   if (value >= 40) return "Medium";
   return "Low";
@@ -30,27 +68,8 @@ function gapColor(selfVal: number, obsVal: number): string {
   return "#EF4444";                // coral — large gap
 }
 
-/** Risk level (1-5) → self value (0-100) */
-function riskToSelf(risk: number | null): number {
-  const r = risk ?? 3;
-  return Math.round((r / 5) * 100);
-}
-
-/** Horizon → self value (0-100) */
-function horizonToSelf(horizon: string | null): number {
-  const map: Record<string, number> = { "<6m": 20, "6m-1y": 40, "1-3y": 60, "3-5y": 80, "5y+": 95 };
-  return map[horizon ?? "<6m"] ?? 50;
-}
-
-/** Max loss → self value for volatility comfort */
-function maxLossToSelf(loss: number | null): number {
-  const map: Record<number, number> = { 0: 10, 5: 30, 10: 50, 20: 70, 50: 90 };
-  return map[loss ?? 10] ?? 50;
-}
-
-/** Short-term cash need → self value for liquidity readiness */
-function cashNeedToSelf(need: boolean): number {
-  return need ? 70 : 30;
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
 }
 
 // ─── Tier label ─────────────────────────────────────────────────────────────
@@ -103,10 +122,10 @@ export async function GET(req: NextRequest) {
   try {
     const supabase = createServiceClient();
 
-    // Get investor self-reported data
+    // Get investor self-reported + behavior-inferred data
     const { data: investor } = await supabase
       .from("investors")
-      .select("self_risk_level, stated_horizon, stated_max_loss, has_short_term_cash_need")
+      .select("self_risk_level, stated_horizon, stated_max_loss, has_short_term_cash_need, actual_tolerance, financial_literacy, investment_experience_years")
       .eq("investor_id", investorId)
       .single();
 
@@ -114,71 +133,94 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(MOCK_PROFILE);
     }
 
-    // Compute all 4 signals
+    // Compute all 4 signals + raw metrics
     const signals = await computeSignals(investorId);
+    const m = signals.metrics;
 
-    // ─── Map to 5 dimensions ────────────────────────────────────────────
+    // ─── Map to 5 radar dimensions (temp.md model: self vs obs, gap = mismatch) ───
 
-    const riskSelf = riskToSelf(investor.self_risk_level);
-    const riskObs = invertValue(signals.panicSelling.level);
+    // 1. Risk Tolerance: self_risk_level vs actual_tolerance
+    const riskSelf = riskToValue(investor.self_risk_level);
+    const riskObs = riskToValue(investor.actual_tolerance ?? investor.self_risk_level);
 
-    const holdSelf = horizonToSelf(investor.stated_horizon);
-    const holdObs = invertValue(signals.holdingDeviation.level);
+    // 2. Holding Patience: stated_horizon vs median hold_days
+    const holdSelf = horizonToValue(investor.stated_horizon);
+    const holdObs =
+      m.totalSells > 0 ? holdDaysToValue(m.medianHoldDays) : holdSelf;
 
-    // Decision Independence: inverted external dependency
-    const indepSelf = 75; // most people assume they're independent
-    const indepObs = invertValue(signals.externalDependency.level);
+    // 3. Decision Independence: experience+literacy vs % self-directed buys
+    const indepSelf = clamp(
+      expToValue(investor.investment_experience_years) + litBonus(investor.financial_literacy),
+      0,
+      100
+    );
+    const indepObs = m.totalBuys > 0 ? Math.round(m.selfBuyRate * 100) : indepSelf;
 
-    const volSelf = maxLossToSelf(investor.stated_max_loss);
-    const volObs = invertValue(signals.panicSelling.level); // panic selling also reflects volatility comfort
+    // 4. Volatility Comfort: stated_max_loss vs panic+drawdown reaction
+    const volSelf = lossToValue(investor.stated_max_loss);
+    const volObs =
+      m.totalSells > 0
+        ? Math.round(100 - ((m.smallDipSellRate + m.panicSourceRate) / 2) * 100)
+        : 100;
 
-    const liqSelf = cashNeedToSelf(investor.has_short_term_cash_need ?? false);
-    const liqObs = invertValue(signals.liquidityConflict.level);
+    // 5. Liquidity Readiness: cash need vs illiquid buys when need is flagged
+    const hasNeed = investor.has_short_term_cash_need ?? false;
+    const liqSelf = cashNeedToValue(hasNeed);
+    const liqObs = !hasNeed
+      ? 100
+      : m.totalBuys > 0
+        ? Math.round(100 - m.illiquidBuyRate * 100)
+        : liqSelf;
 
     const dimensions: DimensionData[] = [
       {
         name: "Risk Tolerance",
-        selfAssessed: selfLevel(riskSelf),
+        selfAssessed: valueToLevel(riskSelf),
         selfValue: riskSelf,
-        observed: invertLevel(signals.panicSelling.level),
+        observed: valueToLevel(riskObs),
         observedValue: riskObs,
-        explanation: signals.panicSelling.detail,
+        explanation:
+          investor.actual_tolerance != null
+            ? `Self-rated R${investor.self_risk_level ?? "?"}; behavior-inferred tolerance R${investor.actual_tolerance}.`
+            : `Self-rated R${investor.self_risk_level ?? "?"}; behavior-inferred tolerance not yet available.`,
         dotColor: gapColor(riskSelf, riskObs),
       },
       {
         name: "Holding Patience",
-        selfAssessed: selfLevel(holdSelf),
+        selfAssessed: valueToLevel(holdSelf),
         selfValue: holdSelf,
-        observed: invertLevel(signals.holdingDeviation.level),
+        observed: valueToLevel(holdObs),
         observedValue: holdObs,
-        explanation: signals.holdingDeviation.detail,
+        explanation: `Stated horizon: ${investor.stated_horizon ?? "—"}. Median hold across ${m.totalSells} sell${m.totalSells === 1 ? "" : "s"}: ${Math.round(m.medianHoldDays)} days.`,
         dotColor: gapColor(holdSelf, holdObs),
       },
       {
         name: "Decision Independence",
-        selfAssessed: selfLevel(indepSelf),
+        selfAssessed: valueToLevel(indepSelf),
         selfValue: indepSelf,
-        observed: invertLevel(signals.externalDependency.level),
+        observed: valueToLevel(indepObs),
         observedValue: indepObs,
-        explanation: signals.externalDependency.detail,
+        explanation: `${Math.round(m.selfBuyRate * 100)}% of your ${m.totalBuys} buy${m.totalBuys === 1 ? "" : "s"} are self-directed; the rest are influenced by advisor, friends, or social media.`,
         dotColor: gapColor(indepSelf, indepObs),
       },
       {
         name: "Volatility Comfort",
-        selfAssessed: selfLevel(volSelf),
+        selfAssessed: valueToLevel(volSelf),
         selfValue: volSelf,
-        observed: invertLevel(signals.panicSelling.level),
+        observed: valueToLevel(volObs),
         observedValue: volObs,
-        explanation: `Your stated max loss tolerance is ${investor.stated_max_loss ?? 10}%, but ${signals.panicSelling.value}% of your loss-sells are triggered by small market dips.`,
+        explanation: `Stated max acceptable loss: ${investor.stated_max_loss ?? "?"}%. ${Math.round(m.smallDipSellRate * 100)}% of your loss-sells trigger at small dips, ${Math.round(m.panicSourceRate * 100)}% labeled as panic.`,
         dotColor: gapColor(volSelf, volObs),
       },
       {
         name: "Liquidity Readiness",
-        selfAssessed: selfLevel(liqSelf),
+        selfAssessed: valueToLevel(liqSelf),
         selfValue: liqSelf,
-        observed: invertLevel(signals.liquidityConflict.level),
+        observed: valueToLevel(liqObs),
         observedValue: liqObs,
-        explanation: signals.liquidityConflict.detail,
+        explanation: hasNeed
+          ? `Short-term cash need flagged. ${Math.round(m.illiquidBuyRate * 100)}% of recent buys are illiquid products.`
+          : `No short-term cash need flagged; liquidity buffer is intact.`,
         dotColor: gapColor(liqSelf, liqObs),
       },
     ];
@@ -187,21 +229,14 @@ export async function GET(req: NextRequest) {
       fitnessScore: signals.fitnessScore,
       summary: generateSummary(signals, tierLabel(signals.tier)),
       signals: {
-        medianHoldDays: Math.round(signals.holdingDeviation.value),
-        panicSellRate: signals.panicSelling.value / 100,
-        externalDecisionPct: signals.externalDependency.value / 100,
+        medianHoldDays: Math.round(m.medianHoldDays),
+        panicSellRate: m.smallDipSellRate,
+        externalDecisionPct: 1 - m.selfBuyRate,
         liquidityConflict: signals.liquidityConflict.level !== "low",
-        transactionCount: 0, // filled below
+        transactionCount: m.totalBuys + m.totalSells,
       },
       dimensions,
     };
-
-    // Get transaction count
-    const { count } = await supabase
-      .from("transactions")
-      .select("*", { count: "exact", head: true })
-      .eq("investor_id", investorId);
-    profile.signals.transactionCount = count ?? 0;
 
     return NextResponse.json(profile);
   } catch (err) {
@@ -224,10 +259,10 @@ const MOCK_PROFILE: ProfileResponse = {
     transactionCount: 38,
   },
   dimensions: [
-    { name: "Risk Tolerance", selfAssessed: "High", selfValue: 70, observed: "Medium", observedValue: 45, explanation: "You rated yourself as comfortable with aggressive positions, but you tend to sell at first signs of downturn.", dotColor: "#F59E0B" },
-    { name: "Holding Patience", selfAssessed: "High", selfValue: 80, observed: "Low", observedValue: 35, explanation: "You said you invest long-term, but your average hold is 47 days.", dotColor: "#EF4444" },
-    { name: "Decision Independence", selfAssessed: "High", selfValue: 75, observed: "High", observedValue: 70, explanation: "Your trades align with your stated preference for independent research.", dotColor: "#14B8BB" },
-    { name: "Volatility Comfort", selfAssessed: "Medium", selfValue: 60, observed: "Low", observedValue: 30, explanation: "You underestimated how much market volatility would affect your decisions.", dotColor: "#F59E0B" },
-    { name: "Liquidity Readiness", selfAssessed: "Medium", selfValue: 50, observed: "High", observedValue: 85, explanation: "You frequently need instant access, more than you initially indicated.", dotColor: "#F59E0B" },
+    { name: "Risk Tolerance",        selfAssessed: "High",   selfValue: 80, observed: "Medium", observedValue: 60, explanation: "Self-rated R4; behavior-inferred tolerance R3.",                                                       dotColor: "#F59E0B" },
+    { name: "Holding Patience",      selfAssessed: "High",   selfValue: 80, observed: "Low",    observedValue: 25, explanation: "Stated horizon: 3-5y. Median hold across 12 sells: 47 days.",                                          dotColor: "#EF4444" },
+    { name: "Decision Independence", selfAssessed: "High",   selfValue: 75, observed: "Medium", observedValue: 60, explanation: "60% of your 20 buys are self-directed; the rest are influenced by advisor, friends, or social media.", dotColor: "#14B8BB" },
+    { name: "Volatility Comfort",    selfAssessed: "Medium", selfValue: 60, observed: "Low",    observedValue: 35, explanation: "Stated max acceptable loss: 10%. 45% of loss-sells at small dips, 20% labeled as panic.",              dotColor: "#F59E0B" },
+    { name: "Liquidity Readiness",   selfAssessed: "Medium", selfValue: 80, observed: "High",   observedValue: 100, explanation: "No short-term cash need flagged; liquidity buffer is intact.",                                         dotColor: "#F59E0B" },
   ],
 };

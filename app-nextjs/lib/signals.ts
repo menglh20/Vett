@@ -18,6 +18,15 @@ export interface SignalEngineOutput {
   liquidityConflict: SignalResult;
   fitnessScore: number;
   tier: "fit" | "caution" | "mismatch";
+  metrics: {
+    medianHoldDays: number;
+    selfBuyRate: number;        // decision_source = 'self' / total buys, 0–1
+    smallDipSellRate: number;   // sells in -10%~0% / loss sells, 0–1
+    panicSourceRate: number;    // sell_decision_source = 'panic' / total sells, 0–1
+    illiquidBuyRate: number;    // illiquid type / total buys, 0–1
+    totalBuys: number;
+    totalSells: number;
+  };
 }
 
 // ─── Score mapping ──────────────────────────────────────────────────────────
@@ -232,8 +241,7 @@ export function computeMatchPercentage(
 // ─── Tier determination ─────────────────────────────────────────────────────
 
 function determineTier(
-  signals: [SignalResult, SignalResult, SignalResult, SignalResult],
-  fitnessScore: number
+  signals: [SignalResult, SignalResult, SignalResult, SignalResult]
 ): "fit" | "caution" | "mismatch" {
   const highCount = signals.filter((s) => s.level === "high").length;
   const mediumCount = signals.filter((s) => s.level === "medium").length;
@@ -322,7 +330,22 @@ export async function computeSignals(investorId: string): Promise<SignalEngineOu
     liquidityConflict,
   ];
   const fitnessScore = allSignals.reduce((sum, s) => sum + s.score, 0);
-  const tier = determineTier(allSignals, fitnessScore);
+  const tier = determineTier(allSignals);
+
+  // Raw metrics for radar dimension calculations
+  const totalBuys = buys.length;
+  const totalSells = sells.length;
+  const lossSells = sells.filter((s) => s.market_change_pct !== null && s.market_change_pct < 0);
+  const smallDipCount = lossSells.filter(
+    (s) => s.market_change_pct! >= -10 && s.market_change_pct! < 0
+  ).length;
+  const smallDipSellRate = lossSells.length > 0 ? smallDipCount / lossSells.length : 0;
+  const panicSourceRate =
+    totalSells > 0 ? sells.filter((s) => s.sell_decision_source === "panic").length / totalSells : 0;
+  const selfBuyRate =
+    totalBuys > 0 ? buys.filter((b) => b.decision_source === "self").length / totalBuys : 0;
+  const illiquidBuyRate =
+    totalBuys > 0 ? buys.filter((b) => ILLIQUID_TYPES.includes(b.product_type)).length / totalBuys : 0;
 
   const result: SignalEngineOutput = {
     holdingDeviation,
@@ -331,6 +354,15 @@ export async function computeSignals(investorId: string): Promise<SignalEngineOu
     liquidityConflict,
     fitnessScore,
     tier,
+    metrics: {
+      medianHoldDays: median(holdDays),
+      selfBuyRate,
+      smallDipSellRate,
+      panicSourceRate,
+      illiquidBuyRate,
+      totalBuys,
+      totalSells,
+    },
   };
 
   // Store in cache
