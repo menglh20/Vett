@@ -99,7 +99,7 @@ export default function WebProfilePage() {
         </div>
 
         <div className="mt-12 text-center">
-          <button onClick={() => router.push("/web")} style={{ fontFamily: "var(--font-outfit)", fontSize: "14px", color: "#888888" }}
+          <button onClick={() => router.push("/web/step/1")} style={{ fontFamily: "var(--font-outfit)", fontSize: "14px", color: "#888888" }}
             onMouseEnter={e => (e.currentTarget.style.color = "#14B8BB")}
             onMouseLeave={e => (e.currentTarget.style.color = "#888888")}>
             Retake Assessment →

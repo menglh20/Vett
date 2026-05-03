@@ -1,6 +1,7 @@
 "use client";
-import { ArrowLeft, MoreVertical } from "lucide-react";
+import { ArrowLeft, MoreVertical, LogOut, Upload } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 
 interface AppHeaderProps {
   onBack?: () => void;
@@ -10,6 +11,33 @@ interface AppHeaderProps {
 }
 
 export function AppHeader({ onBack, title, subtitle, riskLevel }: AppHeaderProps = {}) {
+  const router = useRouter();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuOpen]);
+
+  function handleImport() {
+    setMenuOpen(false);
+    router.push("/import");
+  }
+
+  function handleSignOut() {
+    localStorage.removeItem("vett_investor_id");
+    localStorage.removeItem("vett_onboarding");
+    setMenuOpen(false);
+    router.push("/login");
+  }
+
   if (onBack && title) {
     return (
       <div
@@ -46,9 +74,47 @@ export function AppHeader({ onBack, title, subtitle, riskLevel }: AppHeaderProps
       <p style={{ fontFamily: "var(--font-outfit)", fontSize: "20px", fontWeight: 700, color: "#0A0A0A", letterSpacing: "-0.02em" }}>
         Vett
       </p>
-      <button className="p-1" aria-label="Menu">
-        <MoreVertical className="w-6 h-6" style={{ color: "#888888" }} />
-      </button>
+      <div className="relative" ref={menuRef}>
+        <button
+          className="p-1"
+          aria-label="Menu"
+          onClick={() => setMenuOpen((o) => !o)}
+        >
+          <MoreVertical className="w-6 h-6" style={{ color: "#888888" }} />
+        </button>
+        {menuOpen && (
+          <div
+            className="absolute right-0 top-full mt-2 overflow-hidden z-50"
+            style={{
+              backgroundColor: "#FFFFFF",
+              border: "1px solid #EEEEEE",
+              borderRadius: "12px",
+              minWidth: "180px",
+              boxShadow: "0 8px 24px rgba(0, 0, 0, 0.08)",
+            }}
+          >
+            <button
+              onClick={handleImport}
+              className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 text-left transition-colors"
+            >
+              <Upload className="w-4 h-4" style={{ color: "#666666" }} />
+              <span style={{ fontFamily: "var(--font-outfit)", fontSize: "14px", color: "#333333" }}>
+                Import data
+              </span>
+            </button>
+            <div style={{ height: "1px", backgroundColor: "#F0F0F0" }} />
+            <button
+              onClick={handleSignOut}
+              className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 text-left transition-colors"
+            >
+              <LogOut className="w-4 h-4" style={{ color: "#666666" }} />
+              <span style={{ fontFamily: "var(--font-outfit)", fontSize: "14px", color: "#333333" }}>
+                Sign out
+              </span>
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

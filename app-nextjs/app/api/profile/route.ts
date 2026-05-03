@@ -129,6 +129,63 @@ function generateHeadline(dimensions: DimensionData[]): string {
   return topDim.selfValue > topDim.observedValue ? overText : underText;
 }
 
+// ─── Per-dimension explanation generators (3–4 branches each) ──────────────
+
+const HORIZON_LOWER: Record<string, number> = {
+  "<6m": 30, "6m-1y": 120, "1-3y": 200, "3-5y": 500, "5y+": 800,
+};
+
+function explainRiskTolerance(self: number | null, actual: number | null): string {
+  if (actual == null && self == null) return "Risk tolerance data not yet available.";
+  if (actual == null) return `Self-rated R${self}. Behavior-inferred tolerance not yet computed — needs more transaction history.`;
+  if (self == null)   return `Behavior-inferred tolerance R${actual}; no self-rating on record yet.`;
+  const gap = Math.abs(self - actual);
+  if (gap === 0) return `Self-rated R${self}, and your behavior reflects exactly that — risk perception is well-calibrated.`;
+  if (gap === 1) return `Self-rated R${self}, behavior-inferred R${actual} — a small gap, broadly aligned.`;
+  if (self > actual) return `You self-rated R${self}, but your trading reads closer to R${actual} — your real appetite is more cautious than declared.`;
+  return `You self-rated R${self}, but your trading reads closer to R${actual} — your data shows more risk capacity than your self-rating suggests.`;
+}
+
+function explainHoldingPatience(horizon: string | null, medianHold: number, totalSells: number): string {
+  const h = horizon ?? "—";
+  if (totalSells === 0) return `Stated horizon: ${h}. No completed sells yet — actual holding patience can't be measured from data.`;
+  const md = Math.round(medianHold);
+  const lower = HORIZON_LOWER[horizon ?? "<6m"] ?? 30;
+  if (medianHold >= lower) return `Stated horizon ${h}; median hold ${md} days across ${totalSells} sell${totalSells === 1 ? "" : "s"} — your actual patience matches what you stated.`;
+  if (medianHold >= lower * 0.5) return `Stated horizon ${h}, but median hold is ${md} days — somewhat shorter than the lower end of your stated range (${lower}+ days).`;
+  if (medianHold >= lower / 10) return `Stated horizon ${h}, but median hold drops to ${md} days — well short of your stated range (${lower}+ days expected).`;
+  return `Stated horizon ${h}, but median hold collapses to just ${md} days — an order of magnitude shorter than your stated range implies.`;
+}
+
+function explainDecisionIndependence(selfBuyRate: number, totalBuys: number): string {
+  if (totalBuys === 0) return "No buy transactions yet — decision sources can't be measured.";
+  const pct = Math.round(selfBuyRate * 100);
+  if (selfBuyRate >= 0.7) return `${pct}% of your ${totalBuys} buys are self-directed — you research your own positions consistently.`;
+  if (selfBuyRate >= 0.4) return `${pct}% of your ${totalBuys} buys are self-directed; the rest split between advisor, friends, and social media.`;
+  if (selfBuyRate >= 0.2) return `Only ${pct}% of your ${totalBuys} buys are self-directed — most decisions trace back to advisor, friends, or social media.`;
+  return `Just ${pct}% of your ${totalBuys} buys are self-directed — your trades are overwhelmingly externally driven.`;
+}
+
+function explainVolatilityComfort(maxLoss: number | null, smallDipRate: number, panicRate: number, totalSells: number): string {
+  const ml = maxLoss ?? "?";
+  if (totalSells === 0) return `Stated max loss tolerance: ${ml}%. No sell history yet — drawdown reaction can't be measured.`;
+  const dip = Math.round(smallDipRate * 100);
+  const panic = Math.round(panicRate * 100);
+  const combined = (smallDipRate + panicRate) / 2;
+  if (combined < 0.15) return `Stated max loss ${ml}%; only ${dip}% of loss-sells happen at small dips and ${panic}% are panic-driven — you weather drawdowns calmly.`;
+  if (combined < 0.35) return `Stated max loss ${ml}%, but ${dip}% of loss-sells trigger at small dips (${panic}% labeled as panic) — your tolerance narrows in practice.`;
+  return `Stated max loss ${ml}%, yet ${dip}% of loss-sells happen at small dips and ${panic}% are panic-driven — actual reactions are far more sensitive than declared.`;
+}
+
+function explainLiquidityReadiness(hasNeed: boolean, illiquidRate: number, totalBuys: number): string {
+  if (!hasNeed) return "No short-term cash need flagged; your liquidity buffer is intact.";
+  if (totalBuys === 0) return "Short-term cash need flagged, but no recent buys yet to evaluate against it.";
+  const pct = Math.round(illiquidRate * 100);
+  if (illiquidRate === 0) return "Short-term cash need flagged, and none of your recent buys are illiquid — you're managing the constraint.";
+  if (illiquidRate <= 0.3) return `Short-term cash need flagged; ${pct}% of recent buys are illiquid — manageable but worth watching.`;
+  return `Short-term cash need flagged, yet ${pct}% of recent buys are illiquid — a clear conflict between stated needs and actual buys.`;
+}
+
 // ─── Summary generation ─────────────────────────────────────────────────────
 
 function generateSummary(
@@ -230,10 +287,7 @@ export async function GET(req: NextRequest) {
         selfValue: riskSelf,
         observed: valueToLevel(riskObs),
         observedValue: riskObs,
-        explanation:
-          investor.actual_tolerance != null
-            ? `Self-rated R${investor.self_risk_level ?? "?"}; behavior-inferred tolerance R${investor.actual_tolerance}.`
-            : `Self-rated R${investor.self_risk_level ?? "?"}; behavior-inferred tolerance not yet available.`,
+        explanation: explainRiskTolerance(investor.self_risk_level, investor.actual_tolerance ?? null),
         dotColor: gapColor(riskSelf, riskObs),
       },
       {
@@ -242,7 +296,7 @@ export async function GET(req: NextRequest) {
         selfValue: holdSelf,
         observed: valueToLevel(holdObs),
         observedValue: holdObs,
-        explanation: `Stated horizon: ${investor.stated_horizon ?? "—"}. Median hold across ${m.totalSells} sell${m.totalSells === 1 ? "" : "s"}: ${Math.round(m.medianHoldDays)} days.`,
+        explanation: explainHoldingPatience(investor.stated_horizon, m.medianHoldDays, m.totalSells),
         dotColor: gapColor(holdSelf, holdObs),
       },
       {
@@ -251,7 +305,7 @@ export async function GET(req: NextRequest) {
         selfValue: indepSelf,
         observed: valueToLevel(indepObs),
         observedValue: indepObs,
-        explanation: `${Math.round(m.selfBuyRate * 100)}% of your ${m.totalBuys} buy${m.totalBuys === 1 ? "" : "s"} are self-directed; the rest are influenced by advisor, friends, or social media.`,
+        explanation: explainDecisionIndependence(m.selfBuyRate, m.totalBuys),
         dotColor: gapColor(indepSelf, indepObs),
       },
       {
@@ -260,7 +314,7 @@ export async function GET(req: NextRequest) {
         selfValue: volSelf,
         observed: valueToLevel(volObs),
         observedValue: volObs,
-        explanation: `Stated max acceptable loss: ${investor.stated_max_loss ?? "?"}%. ${Math.round(m.smallDipSellRate * 100)}% of your loss-sells trigger at small dips, ${Math.round(m.panicSourceRate * 100)}% labeled as panic.`,
+        explanation: explainVolatilityComfort(investor.stated_max_loss, m.smallDipSellRate, m.panicSourceRate, m.totalSells),
         dotColor: gapColor(volSelf, volObs),
       },
       {
@@ -269,9 +323,7 @@ export async function GET(req: NextRequest) {
         selfValue: liqSelf,
         observed: valueToLevel(liqObs),
         observedValue: liqObs,
-        explanation: hasNeed
-          ? `Short-term cash need flagged. ${Math.round(m.illiquidBuyRate * 100)}% of recent buys are illiquid products.`
-          : `No short-term cash need flagged; liquidity buffer is intact.`,
+        explanation: explainLiquidityReadiness(hasNeed, m.illiquidBuyRate, m.totalBuys),
         dotColor: gapColor(liqSelf, liqObs),
       },
     ];
