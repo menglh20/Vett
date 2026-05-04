@@ -82,11 +82,11 @@ export default function CheckPage() {
         </div>
 
         {/* Flags */}
-        {data.flags.length > 0 && (
+        {(data.flags ?? []).length > 0 && (
           <div className="px-6 pb-6">
             <h2 className="mb-4" style={{ fontFamily: "var(--font-outfit)", fontSize: "20px", fontWeight: 700, color: "#111111" }}>Flags</h2>
             <div className="space-y-3">
-              {data.flags.map((flag: Flag, i: number) => (
+              {(data.flags ?? []).map((flag: Flag, i: number) => (
                 <div key={i} className="flex gap-3">
                   <div className="flex-shrink-0 flex items-center justify-center rounded-full" style={{ width: "32px", height: "32px", backgroundColor: tierColor }}>
                     <div style={{ color: "#FFFFFF" }}>{ICON_MAP[flag.iconType]}</div>
@@ -110,13 +110,13 @@ export default function CheckPage() {
             <p className="mb-4" style={{ fontFamily: "var(--font-outfit)", fontSize: "15px", color: "#333333", lineHeight: "1.5" }}>
               {data.aiExplanation}
             </p>
-            {data.reflectionQuestions.length > 0 && (
+            {(data.reflectionQuestions ?? []).length > 0 && (
               <>
                 <h3 className="mb-2" style={{ fontFamily: "var(--font-outfit)", fontSize: "15px", fontWeight: 600, color: "#111111" }}>
                   Reflection questions
                 </h3>
                 <ol className="space-y-2">
-                  {data.reflectionQuestions.map((q, i) => (
+                  {(data.reflectionQuestions ?? []).map((q, i) => (
                     <li key={i} style={{ fontFamily: "var(--font-outfit)", fontSize: "15px", color: "#333333", lineHeight: "1.5" }}>
                       {i + 1}. {q}
                     </li>
@@ -131,13 +131,13 @@ export default function CheckPage() {
         </div>
 
         {/* Suggestions */}
-        {data.suggestions.length > 0 && (
+        {(data.suggestions ?? []).length > 0 && (
           <div className="px-6 pb-6">
             <h2 className="mb-4" style={{ fontFamily: "var(--font-outfit)", fontSize: "20px", fontWeight: 700, color: "#111111" }}>
               If you still want to proceed
             </h2>
             <div className="space-y-3">
-              {data.suggestions.map((s, i) => (
+              {(data.suggestions ?? []).map((s, i) => (
                 <div key={i} className="flex items-start gap-3 p-3 rounded-xl" style={{ border: "1px solid #EEEEEE" }}>
                   <AlertCircle className="w-5 h-5 mt-0.5" style={{ color: "#888888" }} />
                   <p style={{ fontFamily: "var(--font-outfit)", fontSize: "14px", color: "#333333" }}>{s}</p>
@@ -148,13 +148,13 @@ export default function CheckPage() {
         )}
 
         {/* Alternatives */}
-        {data.alternatives.length > 0 && (
+        {(data.alternatives ?? []).length > 0 && (
           <div className="px-6 pb-6">
             <h2 className="mb-4" style={{ fontFamily: "var(--font-outfit)", fontSize: "20px", fontWeight: 700, color: "#111111" }}>
               Better matches in this category
             </h2>
             <div className="flex gap-3 overflow-x-auto pb-2">
-              {data.alternatives.map(alt => (
+              {(data.alternatives ?? []).map(alt => (
                 <div
                   key={alt.ticker}
                   className="flex-shrink-0 p-4 rounded-xl cursor-pointer"

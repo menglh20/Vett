@@ -161,12 +161,14 @@ async function readDbCache(
     return {
       score: data.score as number,
       tier: data.tier as CheckLLMOutput["tier"],
-      flags: data.flags as CheckLLMOutput["flags"],
-      aiExplanation: data.ai_explanation as string,
-      reflectionQuestions: data.reflection_questions as string[],
-      suggestions: data.suggestions as string[],
+      flags: Array.isArray(data.flags) ? (data.flags as CheckLLMOutput["flags"]) : [],
+      aiExplanation: (data.ai_explanation as string) ?? "",
+      reflectionQuestions: Array.isArray(data.reflection_questions)
+        ? (data.reflection_questions as string[])
+        : [],
+      suggestions: Array.isArray(data.suggestions) ? (data.suggestions as string[]) : [],
       confidence: data.confidence as CheckLLMOutput["confidence"],
-      dataBasis: data.data_basis as string,
+      dataBasis: (data.data_basis as string) ?? "",
     };
   } catch {
     return null;
@@ -231,7 +233,60 @@ export async function readDbCacheBatch(
   return result;
 }
 
+// ─── Validation ─────────────────────────────────────────────────────────────
+
+const VALID_TIERS = new Set(["fit", "caution", "mismatch"]);
+const VALID_CONFIDENCE = new Set(["low", "medium", "high"]);
+const VALID_ICON_TYPES = new Set(["clock", "trending-down", "users", "alert"]);
+
+/** Returns array of human-readable issues; empty array means valid. */
+function validateOutput(raw: unknown): string[] {
+  const issues: string[] = [];
+  if (!raw || typeof raw !== "object") return ["output is not an object"];
+  const r = raw as Record<string, unknown>;
+
+  if (typeof r.score !== "number" || r.score < 0 || r.score > 100) {
+    issues.push("`score` must be an integer in [0,100]");
+  }
+  if (typeof r.tier !== "string" || !VALID_TIERS.has(r.tier)) {
+    issues.push("`tier` must be one of 'fit', 'caution', 'mismatch'");
+  }
+  if (!Array.isArray(r.flags)) {
+    issues.push("`flags` must be an array");
+  } else {
+    r.flags.forEach((f, i) => {
+      if (!f || typeof f !== "object") issues.push(`flags[${i}] must be an object`);
+      else {
+        const flag = f as Record<string, unknown>;
+        if (typeof flag.label !== "string") issues.push(`flags[${i}].label must be a string`);
+        if (typeof flag.explanation !== "string") issues.push(`flags[${i}].explanation must be a string`);
+        if (typeof flag.iconType !== "string" || !VALID_ICON_TYPES.has(flag.iconType)) {
+          issues.push(`flags[${i}].iconType must be one of clock|trending-down|users|alert`);
+        }
+      }
+    });
+  }
+  if (typeof r.aiExplanation !== "string" || r.aiExplanation.length === 0) {
+    issues.push("`aiExplanation` must be a non-empty string");
+  }
+  if (!Array.isArray(r.reflectionQuestions) || !r.reflectionQuestions.every((q) => typeof q === "string")) {
+    issues.push("`reflectionQuestions` must be an array of strings");
+  }
+  if (!Array.isArray(r.suggestions) || !r.suggestions.every((s) => typeof s === "string")) {
+    issues.push("`suggestions` must be an array of strings");
+  }
+  if (typeof r.confidence !== "string" || !VALID_CONFIDENCE.has(r.confidence)) {
+    issues.push("`confidence` must be one of 'low', 'medium', 'high'");
+  }
+  if (typeof r.dataBasis !== "string") {
+    issues.push("`dataBasis` must be a string");
+  }
+  return issues;
+}
+
 // ─── Main entry point ───────────────────────────────────────────────────────
+
+const MAX_LLM_RETRIES = 1; // Total attempts = MAX_LLM_RETRIES + 1
 
 export async function generateCheck(
   investorId: string,
@@ -256,37 +311,93 @@ export async function generateCheck(
 
   const client = new Anthropic({ apiKey });
 
-  const response = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 2000,
-    temperature: 0,
-    system: [
-      {
-        type: "text",
-        text: SYSTEM_PROMPT,
-        cache_control: { type: "ephemeral" },
-      },
-    ],
-    tools: [CHECK_TOOL],
-    tool_choice: { type: "tool", name: "submit_check_result" },
-    messages: [
-      {
-        role: "user",
-        content: `Run the fitness check for the following input. Use the submit_check_result tool exactly once.\n\n${JSON.stringify(input, null, 2)}`,
-      },
-    ],
-  });
+  // Build messages — appended with tool_result feedback on retry
+  const messages: Anthropic.MessageParam[] = [
+    {
+      role: "user",
+      content: `Run the fitness check for the following input. Use the submit_check_result tool exactly once.\n\n${JSON.stringify(input, null, 2)}`,
+    },
+  ];
 
-  for (const block of response.content) {
-    if (block.type === "tool_use" && block.name === "submit_check_result") {
-      const result = block.input as CheckLLMOutput;
+  for (let attempt = 0; attempt <= MAX_LLM_RETRIES; attempt++) {
+    const response = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 2000,
+      temperature: 0,
+      system: [
+        {
+          type: "text",
+          text: SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      tools: [CHECK_TOOL],
+      tool_choice: { type: "tool", name: "submit_check_result" },
+      messages,
+    });
+
+    let toolUseBlock: Anthropic.ToolUseBlock | null = null;
+    for (const block of response.content) {
+      if (block.type === "tool_use" && block.name === "submit_check_result") {
+        toolUseBlock = block;
+        break;
+      }
+    }
+
+    if (!toolUseBlock) {
+      console.error(`[llm] Attempt ${attempt + 1}: no tool_use block in response`);
+      if (attempt === MAX_LLM_RETRIES) throw new Error("LLM did not return structured tool output");
+      // Push a generic nudge and retry
+      messages.push({ role: "assistant", content: response.content });
+      messages.push({
+        role: "user",
+        content: "You must call the submit_check_result tool with the structured fitness check result.",
+      });
+      continue;
+    }
+
+    const issues = validateOutput(toolUseBlock.input);
+    if (issues.length === 0) {
+      const raw = toolUseBlock.input as Record<string, unknown>;
+      const result: CheckLLMOutput = {
+        score: raw.score as number,
+        tier: raw.tier as CheckLLMOutput["tier"],
+        flags: raw.flags as CheckLLMOutput["flags"],
+        aiExplanation: raw.aiExplanation as string,
+        reflectionQuestions: raw.reflectionQuestions as string[],
+        suggestions: raw.suggestions as string[],
+        confidence: raw.confidence as CheckLLMOutput["confidence"],
+        dataBasis: raw.dataBasis as string,
+      };
+      if (attempt > 0) console.log(`[llm] Validation passed on retry ${attempt}`);
       l1Cache.set(cacheKey, { data: result, expiry: Date.now() + L1_TTL });
-      // Fire-and-forget DB write — don't block on it
       writeDbCache(investorId, ticker, result);
       return result;
     }
+
+    // Validation failed
+    console.warn(`[llm] Attempt ${attempt + 1} validation failed:`, issues, "raw:", toolUseBlock.input);
+    if (attempt === MAX_LLM_RETRIES) {
+      throw new Error(`LLM output failed validation after ${attempt + 1} attempts: ${issues.join("; ")}`);
+    }
+
+    // Append assistant turn + tool_result feedback for next attempt
+    messages.push({ role: "assistant", content: response.content });
+    messages.push({
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: toolUseBlock.id,
+          content: `Validation failed: ${issues.join("; ")}. Please call submit_check_result again with all fields corrected.`,
+          is_error: true,
+        },
+      ],
+    });
   }
-  throw new Error("LLM did not return structured tool output");
+
+  // Unreachable, but keeps TS happy
+  throw new Error("LLM retry loop exited unexpectedly");
 }
 
 export function invalidateCheckCache(investorId: string, ticker?: string) {

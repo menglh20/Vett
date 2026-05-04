@@ -81,11 +81,11 @@ export default function WebCheckPage() {
             </div>
 
             {/* Flags */}
-            {data.flags.length > 0 && (
+            {(data.flags ?? []).length > 0 && (
               <div>
                 <h2 style={{ fontFamily: "var(--font-outfit)", fontSize: "18px", fontWeight: 700, color: "#0A0A0A", marginBottom: "16px" }}>Mismatch Flags</h2>
                 <div className="space-y-3">
-                  {data.flags.map((flag: Flag, i: number) => (
+                  {(data.flags ?? []).map((flag: Flag, i: number) => (
                     <div key={i} className="flex gap-3 p-4 rounded-xl" style={{ border: "1px solid #EEEEEE", backgroundColor: "#FAFAFA" }}>
                       <div style={{ color: "#F59E0B", marginTop: "2px" }}>{ICON_MAP[flag.iconType]}</div>
                       <div>
@@ -99,11 +99,11 @@ export default function WebCheckPage() {
             )}
 
             {/* Suggestions */}
-            {data.suggestions.length > 0 && (
+            {(data.suggestions ?? []).length > 0 && (
               <div>
                 <h2 style={{ fontFamily: "var(--font-outfit)", fontSize: "18px", fontWeight: 700, color: "#0A0A0A", marginBottom: "16px" }}>If you still want to proceed</h2>
                 <div className="space-y-3">
-                  {data.suggestions.map((s, i) => (
+                  {(data.suggestions ?? []).map((s, i) => (
                     <div key={i} className="flex items-start gap-3 p-4 rounded-xl" style={{ border: "1px solid #EEEEEE" }}>
                       <AlertCircle className="w-5 h-5 mt-0.5" style={{ color: "#14B8BB" }} />
                       <p style={{ fontFamily: "var(--font-outfit)", fontSize: "13px", color: "#333333" }}>{s}</p>
@@ -128,11 +128,11 @@ export default function WebCheckPage() {
                 <p style={{ fontFamily: "var(--font-outfit)", fontSize: "14px", color: "#333333", lineHeight: "1.6", marginBottom: "20px" }}>
                   {data.aiExplanation}
                 </p>
-                {data.reflectionQuestions.length > 0 && (
+                {(data.reflectionQuestions ?? []).length > 0 && (
                   <>
                     <h3 style={{ fontFamily: "var(--font-outfit)", fontSize: "14px", fontWeight: 600, color: "#0A0A0A", marginBottom: "12px" }}>Reflection questions</h3>
                     <ol className="space-y-2">
-                      {data.reflectionQuestions.map((q, i) => (
+                      {(data.reflectionQuestions ?? []).map((q, i) => (
                         <li key={i} style={{ fontFamily: "var(--font-outfit)", fontSize: "13px", color: "#666666", lineHeight: "1.5" }}>{i + 1}. {q}</li>
                       ))}
                     </ol>
@@ -142,7 +142,7 @@ export default function WebCheckPage() {
             </div>
 
             {/* Alternatives table */}
-            {data.alternatives.length > 0 && (
+            {(data.alternatives ?? []).length > 0 && (
               <div>
                 <h2 style={{ fontFamily: "var(--font-outfit)", fontSize: "18px", fontWeight: 700, color: "#0A0A0A", marginBottom: "16px" }}>Better matches for you</h2>
                 <div className="rounded-2xl overflow-hidden" style={{ border: "1px solid #EEEEEE" }}>
@@ -155,9 +155,9 @@ export default function WebCheckPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {data.alternatives.map((alt, i) => (
+                      {(data.alternatives ?? []).map((alt, i) => (
                         <tr key={alt.ticker} onClick={() => router.push(`/web/check/${alt.ticker}`)} className="cursor-pointer hover:bg-gray-50 transition-colors"
-                          style={{ borderBottom: i < data.alternatives.length - 1 ? "1px solid #F5F5F5" : "none" }}>
+                          style={{ borderBottom: i < (data.alternatives ?? []).length - 1 ? "1px solid #F5F5F5" : "none" }}>
                           <td className="px-5 py-3.5"><span style={{ fontFamily: "var(--font-outfit)", fontSize: "15px", fontWeight: 600, color: "#0A0A0A" }}>{alt.ticker}</span></td>
                           <td className="px-5 py-3.5"><span style={{ fontFamily: "var(--font-outfit)", fontSize: "13px", color: "#888888" }}>{alt.name}</span></td>
                           <td className="px-5 py-3.5">
