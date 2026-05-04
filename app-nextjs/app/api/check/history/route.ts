@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase";
 import { computeSignals, computeMatchPercentage } from "@/lib/signals";
+import { readDbCacheBatch } from "@/lib/llm";
 import type { HistoryResponse, RiskLevel } from "@/lib/types";
 
 const RISK_LABELS: Record<number, RiskLevel> = { 1: "R1", 2: "R2", 3: "R3", 4: "R4", 5: "R5" };
@@ -60,32 +61,43 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Compute signals for matchPercentage
+    // Compute signals for matchPercentage fallback
     const signals = await computeSignals(investorId);
     const actualTolerance = investor.actual_tolerance ?? 3;
 
-    // Build history items
+    // Pull any LLM-generated scores already stored for these tickers
+    const candidateTickers = Array.from(seen.values())
+      .map((entry) => productMap.get(entry.product_type)?.ticker ?? entry.product_type.toUpperCase());
+    const llmScores = await readDbCacheBatch(investorId, candidateTickers);
+
+    // Build history items — prefer LLM score when available, else rule-based
     const items = Array.from(seen.values())
       .map((entry) => {
         const product = productMap.get(entry.product_type);
         const riskLevel = product?.risk_level ?? entry.risk_level;
+        const ticker = product?.ticker ?? entry.product_type.toUpperCase();
 
-        const match = computeMatchPercentage(
-          {
-            risk_level: riskLevel,
-            is_long_term: product?.is_long_term ?? false,
-            is_illiquid: product?.is_illiquid ?? false,
-          },
-          actualTolerance,
-          signals
-        );
+        const cachedScore = llmScores.get(ticker);
+        const match =
+          cachedScore !== undefined
+            ? cachedScore
+            : computeMatchPercentage(
+                {
+                  risk_level: riskLevel,
+                  is_long_term: product?.is_long_term ?? false,
+                  is_illiquid: product?.is_illiquid ?? false,
+                },
+                actualTolerance,
+                signals
+              );
 
         return {
           date: formatDate(entry.date),
-          ticker: product?.ticker ?? entry.product_type.toUpperCase(),
+          ticker,
           name: product?.name ?? entry.product_type.replace(/_/g, " "),
           riskLevel: RISK_LABELS[riskLevel] ?? "R3" as RiskLevel,
           matchPercentage: match,
+          isEstimate: cachedScore === undefined,
         };
       })
       .sort((a, b) => b.matchPercentage - a.matchPercentage);

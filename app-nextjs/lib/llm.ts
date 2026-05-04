@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { createServiceClient } from "@/lib/supabase";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -130,10 +131,105 @@ const CHECK_TOOL: Anthropic.Tool = {
   },
 };
 
-// ─── Cache ──────────────────────────────────────────────────────────────────
+// ─── L1 in-memory cache ─────────────────────────────────────────────────────
 
-const CACHE_TTL = 30 * 60 * 1000;
-const checkCache = new Map<string, { data: CheckLLMOutput; expiry: number }>();
+const L1_TTL = 30 * 60 * 1000; // 30 min
+const l1Cache = new Map<string, { data: CheckLLMOutput; expiry: number }>();
+
+// ─── L2 Supabase cache (24-hour TTL) ────────────────────────────────────────
+
+const L2_TTL_HOURS = 24;
+
+async function readDbCache(
+  investorId: string,
+  ticker: string
+): Promise<CheckLLMOutput | null> {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return null;
+  }
+  try {
+    const supabase = createServiceClient();
+    const cutoff = new Date(Date.now() - L2_TTL_HOURS * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from("check_results")
+      .select("score, tier, flags, ai_explanation, reflection_questions, suggestions, confidence, data_basis")
+      .eq("investor_id", investorId)
+      .eq("ticker", ticker)
+      .gte("created_at", cutoff)
+      .maybeSingle();
+    if (error || !data) return null;
+    return {
+      score: data.score as number,
+      tier: data.tier as CheckLLMOutput["tier"],
+      flags: data.flags as CheckLLMOutput["flags"],
+      aiExplanation: data.ai_explanation as string,
+      reflectionQuestions: data.reflection_questions as string[],
+      suggestions: data.suggestions as string[],
+      confidence: data.confidence as CheckLLMOutput["confidence"],
+      dataBasis: data.data_basis as string,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeDbCache(
+  investorId: string,
+  ticker: string,
+  out: CheckLLMOutput
+): Promise<void> {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) return;
+  try {
+    const supabase = createServiceClient();
+    await supabase
+      .from("check_results")
+      .upsert(
+        {
+          investor_id: investorId,
+          ticker,
+          score: out.score,
+          tier: out.tier,
+          flags: out.flags,
+          ai_explanation: out.aiExplanation,
+          reflection_questions: out.reflectionQuestions,
+          suggestions: out.suggestions,
+          confidence: out.confidence,
+          data_basis: out.dataBasis,
+          created_at: new Date().toISOString(),
+        },
+        { onConflict: "investor_id,ticker" }
+      );
+  } catch (err) {
+    console.error("[llm] writeDbCache failed:", err);
+  }
+}
+
+// ─── Batch read for trending list ───────────────────────────────────────────
+
+export async function readDbCacheBatch(
+  investorId: string,
+  tickers: string[]
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (tickers.length === 0) return result;
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) return result;
+  try {
+    const supabase = createServiceClient();
+    const cutoff = new Date(Date.now() - L2_TTL_HOURS * 60 * 60 * 1000).toISOString();
+    const { data } = await supabase
+      .from("check_results")
+      .select("ticker, score")
+      .eq("investor_id", investorId)
+      .in("ticker", tickers.map((t) => t.toUpperCase()))
+      .gte("created_at", cutoff);
+    for (const row of data ?? []) {
+      result.set(row.ticker as string, row.score as number);
+    }
+  } catch (err) {
+    console.error("[llm] readDbCacheBatch failed:", err);
+  }
+  return result;
+}
 
 // ─── Main entry point ───────────────────────────────────────────────────────
 
@@ -141,9 +237,19 @@ export async function generateCheck(
   investorId: string,
   input: CheckLLMInput
 ): Promise<CheckLLMOutput> {
-  const cacheKey = `${investorId}:${input.product.ticker.toUpperCase()}`;
-  const cached = checkCache.get(cacheKey);
+  const ticker = input.product.ticker.toUpperCase();
+  const cacheKey = `${investorId}:${ticker}`;
+
+  // L1
+  const cached = l1Cache.get(cacheKey);
   if (cached && Date.now() < cached.expiry) return cached.data;
+
+  // L2
+  const dbHit = await readDbCache(investorId, ticker);
+  if (dbHit) {
+    l1Cache.set(cacheKey, { data: dbHit, expiry: Date.now() + L1_TTL });
+    return dbHit;
+  }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
@@ -151,7 +257,7 @@ export async function generateCheck(
   const client = new Anthropic({ apiKey });
 
   const response = await client.messages.create({
-    model: "claude-sonnet-4-6",
+    model: "claude-haiku-4-5-20251001",
     max_tokens: 2000,
     temperature: 0,
     system: [
@@ -174,7 +280,9 @@ export async function generateCheck(
   for (const block of response.content) {
     if (block.type === "tool_use" && block.name === "submit_check_result") {
       const result = block.input as CheckLLMOutput;
-      checkCache.set(cacheKey, { data: result, expiry: Date.now() + CACHE_TTL });
+      l1Cache.set(cacheKey, { data: result, expiry: Date.now() + L1_TTL });
+      // Fire-and-forget DB write — don't block on it
+      writeDbCache(investorId, ticker, result);
       return result;
     }
   }
@@ -183,10 +291,10 @@ export async function generateCheck(
 
 export function invalidateCheckCache(investorId: string, ticker?: string) {
   if (ticker) {
-    checkCache.delete(`${investorId}:${ticker.toUpperCase()}`);
+    l1Cache.delete(`${investorId}:${ticker.toUpperCase()}`);
   } else {
-    for (const key of checkCache.keys()) {
-      if (key.startsWith(`${investorId}:`)) checkCache.delete(key);
+    for (const key of l1Cache.keys()) {
+      if (key.startsWith(`${investorId}:`)) l1Cache.delete(key);
     }
   }
 }

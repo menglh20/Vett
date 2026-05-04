@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Home, User, BookOpen } from "lucide-react";
+import { Search, Home, User, BookOpen, HelpCircle } from "lucide-react";
 import { AppHeader } from "@/components/shared/AppHeader";
 import { FitnessProgressBar } from "@/components/shared/FitnessProgressBar";
 import type { ProfileResponse, TrendingProduct, HistoryItem } from "@/lib/types";
@@ -115,8 +115,19 @@ export default function HomePage() {
                     </div>
                     <p style={{ fontFamily: "var(--font-outfit)", fontSize: "13px", color: "#888888" }}>{p.name}</p>
                   </div>
-                  <span style={{ fontFamily: "var(--font-outfit)", fontSize: "22px", fontWeight: 700, color: getMatchColor(p.matchPercentage) }}>
+                  <span
+                    title={p.isEstimate ? "Estimate. Open this product to run the full AI check." : ""}
+                    className="inline-flex items-center gap-1"
+                    style={{
+                      fontFamily: "var(--font-outfit)",
+                      fontSize: "22px",
+                      fontWeight: 700,
+                      color: getMatchColor(p.matchPercentage),
+                      opacity: p.isEstimate ? 0.55 : 1,
+                    }}
+                  >
                     {p.matchPercentage}%
+                    {p.isEstimate && <HelpCircle className="w-3.5 h-3.5" />}
                   </span>
                 </div>
               ))
@@ -132,8 +143,19 @@ export default function HomePage() {
                     <p style={{ fontFamily: "var(--font-outfit)", fontSize: "13px", color: "#888888" }}>{h.name}</p>
                     <p style={{ fontFamily: "var(--font-outfit)", fontSize: "12px", color: "#AAAAAA" }}>{h.date}</p>
                   </div>
-                  <span style={{ fontFamily: "var(--font-outfit)", fontSize: "22px", fontWeight: 700, color: getMatchColor(h.matchPercentage) }}>
+                  <span
+                    title={h.isEstimate ? "Estimate. Open this product to run the full AI check." : ""}
+                    className="inline-flex items-center gap-1"
+                    style={{
+                      fontFamily: "var(--font-outfit)",
+                      fontSize: "22px",
+                      fontWeight: 700,
+                      color: getMatchColor(h.matchPercentage),
+                      opacity: h.isEstimate ? 0.55 : 1,
+                    }}
+                  >
                     {h.matchPercentage}%
+                    {h.isEstimate && <HelpCircle className="w-3.5 h-3.5" />}
                   </span>
                 </div>
               ))}

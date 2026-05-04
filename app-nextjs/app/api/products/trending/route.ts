@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase";
 import { computeSignals, computeMatchPercentage } from "@/lib/signals";
+import { readDbCacheBatch } from "@/lib/llm";
 import type { TrendingResponse, RiskLevel } from "@/lib/types";
 
 const TRENDING_TICKERS = ["NVDA", "AAPL", "TSLA", "VOO", "BND", "MSFT", "AMZN"];
@@ -34,25 +35,33 @@ export async function GET(req: NextRequest) {
 
     const actualTolerance = investor?.actual_tolerance ?? 3;
 
-    // Compute signals for matchPercentage
+    // L2 cache: pull any LLM-generated scores already stored for this user
+    const llmScores = await readDbCacheBatch(investorId, TRENDING_TICKERS);
+
+    // Compute rule-based fallback for products without an LLM cache hit
     const signals = await computeSignals(investorId);
 
-    // Build trending list
+    // Build trending list — prefer LLM score when available, else rule-based
     const trendingProducts = TRENDING_TICKERS.map((ticker) => {
       const p = products.find((pr) => pr.ticker === ticker);
       if (!p) return null;
 
-      const match = computeMatchPercentage(
-        { risk_level: p.risk_level, is_long_term: p.is_long_term, is_illiquid: p.is_illiquid },
-        actualTolerance,
-        signals
-      );
+      const cachedScore = llmScores.get(ticker);
+      const match =
+        cachedScore !== undefined
+          ? cachedScore
+          : computeMatchPercentage(
+              { risk_level: p.risk_level, is_long_term: p.is_long_term, is_illiquid: p.is_illiquid },
+              actualTolerance,
+              signals
+            );
 
       return {
         ticker: p.ticker,
         name: p.name,
         riskLevel: RISK_LABELS[p.risk_level] ?? "R3" as RiskLevel,
         matchPercentage: match,
+        isEstimate: cachedScore === undefined,
       };
     }).filter((item): item is NonNullable<typeof item> => item !== null);
 

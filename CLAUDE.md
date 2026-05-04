@@ -12,9 +12,13 @@ Vett ("Vet your decision before you act") is a web-based investment decision fit
 ├── frontend/           # Legacy Vite + React prototype (reference only, do NOT modify)
 ├── ARCHITECTURE.md     # Full system architecture, data model, agentic engineering plan
 ├── SPEC.md             # Product spec: user stories, acceptance criteria, data schema
+├── PM.md / temp.md     # PM-authored Chinese spec (5-dim radar definitions etc.)
+├── TECH.md             # Detailed technical implementation doc (Chinese, dev-facing)
 ├── README.md           # Project overview
 └── gix-bucks.md        # Payment agreement
 ```
+
+> **Current implementation details, dimension formulas, LLM prompt, caching strategy, and the running list of "things to confirm with PM" all live in [TECH.md](TECH.md). Read it before changing anything in `lib/signals.ts`, `lib/llm.ts`, or the profile/check API routes.**
 
 **All active development happens in `app-nextjs/`.** The `frontend/` directory is the original Figma-exported prototype kept for visual reference — never edit it.
 
@@ -24,10 +28,10 @@ Vett ("Vet your decision before you act") is a web-based investment decision fit
 - **Styling**: Tailwind CSS 3 + inline styles using Outfit font via `next/font/google`
 - **Charts**: recharts (RadarChart)
 - **Icons**: lucide-react
-- **Database**: Supabase PostgreSQL + pgvector
-- **Auth**: Custom auth (bcryptjs, investor_id as username)
-- **AI** (planned): Claude Sonnet (generation) + Claude Haiku (validation)
-- **Embeddings** (planned): OpenAI text-embedding-3-small
+- **Database**: Supabase PostgreSQL (pgvector planned, not yet enabled)
+- **Auth**: Custom auth (bcryptjs, investor_id as username, localStorage session)
+- **AI**: Claude Haiku 4.5 (`claude-haiku-4-5-20251001`) via Anthropic SDK with `tool_use` for structured output
+- **Embeddings** (planned): OpenAI text-embedding-3-small (only when RAG is wired up)
 
 ## Running the app
 
@@ -65,11 +69,16 @@ app-nextjs/
 ├── lib/
 │   ├── types.ts           # Shared TypeScript interfaces
 │   ├── supabase.ts        # Supabase client (browser + service)
-│   └── signals.ts         # Signal engine (4 signals → score + tier)
+│   ├── signals.ts         # Signal engine (4 signals → score + tier + raw metrics)
+│   ├── llm.ts             # Claude Haiku wrapper + 2-tier cache (in-memory L1 + Supabase L2)
+│   └── articles.ts        # Hardcoded 16-article knowledge base (mock until RAG)
+├── middleware.ts          # UA-based redirect: desktop "/" → "/web/..."
 ├── scripts/
 │   └── seed.ts            # CSV → Supabase seed script (npm run seed)
 ├── supabase/
-│   └── migrations/        # SQL schema migrations
+│   └── migrations/
+│       ├── 00001_create_tables.sql       # investors / products / transactions
+│       └── 00002_create_check_results.sql # LLM cache (24h TTL)
 └── package.json
 ```
 
@@ -88,20 +97,23 @@ Both share the same API routes, types, and shared components.
 
 **Done:**
 - Frontend: all pages built (mobile + web dual UI)
-- Auth: login/register pages + API routes (bcryptjs, investor_id = username)
-- Database: Supabase schema migration (investors, transactions, products tables)
-- Seed script: CSV → Supabase with bcrypt hashed passwords (`npm run seed`), includes 37 products
-- Onboarding: step 1-7 answers saved to localStorage, synced to Supabase after step 7
-- Signal engine: 4 signals computed from Supabase data (lib/signals.ts), with 5-min in-memory cache
-- Profile API: real signal computation with mock data fallback
-- Trending API: product info from DB, matchPercentage via signal engine
-- History API: derived from user transactions, matchPercentage via signal engine
-- Match percentage: base score (risk distance) + signal-based penalty modifiers
+- Auth: login/register + API routes (bcryptjs, investor_id = username)
+- Database: 2 migrations applied (investors / products / transactions / check_results)
+- Seed: CSV → Supabase, 500 investors + 8400 transactions + 37 products (default password `vett2026`)
+- Onboarding: 7 questions, answers saved to localStorage, synced after step 7
+- Signal engine: 4 signals + raw metrics, 5-min in-memory cache
+- Profile API: 5-dim radar (self vs obs, gap = mismatch model from PM.md), dynamic headline (10 templates), 3-5 branch dimension explanations
+- **LLM Match Check**: Claude Haiku 4.5 generates score / tier / flags / aiExplanation / reflectionQuestions / suggestions / confidence per `(investor, ticker)`. 6-principle system prompt + Anthropic prompt cache.
+- **2-tier cache**: in-memory L1 (30 min) + Supabase `check_results` L2 (24h). Same user sees same result for 24h.
+- Trending / History APIs: prefer LLM cached score, fall back to rule-based `computeMatchPercentage`. Dashboards mark non-LLM scores with `?` icon + tooltip + dimmed opacity.
+- UA middleware: desktop hitting `/` auto-redirects to `/web/...`
+- Header dropdown menu (mobile + web): Import data / Sign out
 
 **What still needs to be built:**
-- RAG retrieval (pgvector)
-- AI explanation (Claude Sonnet generation + Claude Haiku validation)
-- Replace remaining mock API routes (check/[ticker], articles, advisor) with real Supabase queries
+- RAG retrieval (pgvector + 16-article vector store + retrieval logic in LLM context)
+- Replace mock API routes: `/api/articles*` (16-article hardcoded), `/api/advisor/clients` (5 fake clients)
+- Investor goal (Q1) + target gain (Q6) saved but not yet used in any computation
+- See [TECH.md §9](TECH.md) for the running PM-alignment punch list
 
 ## API routes
 
@@ -110,15 +122,15 @@ Both share the same API routes, types, and shared components.
 | `POST /api/auth/register` | real | Register new investor (bcrypt) |
 | `POST /api/auth/login` | real | Login with investor_id + password (bcrypt) |
 | `POST /api/onboarding` | real | Save step 1-7 answers to Supabase |
-| `GET /api/profile?investor_id=` | real* | Fitness score, 5-dimension profile, signals |
-| `GET /api/check/[ticker]` | mock | Score, tier, flags, AI explanation, alternatives |
-| `GET /api/check/history?investor_id=` | real* | User's traded products with matchPercentage |
-| `GET /api/products/trending?investor_id=` | real* | 7 trending products with matchPercentage |
-| `GET /api/articles?category=` | mock | 16 articles, filterable by category |
+| `GET /api/profile?investor_id=` | real* | Fitness score, headline, 5-dimension profile, signals |
+| `GET /api/check/[ticker]?investor_id=` | **real (LLM)** | LLM-driven score / tier / flags / AI explanation / suggestions / alternatives. 24h cached. |
+| `GET /api/check/history?investor_id=` | real* | User's traded products. Match% prefers LLM cache, falls back to rule-based with `isEstimate=true`. |
+| `GET /api/products/trending?investor_id=` | real* | 7 trending products. Same caching strategy as history. |
+| `GET /api/articles?category=` | mock | 16 articles hardcoded in `lib/articles.ts` |
 | `GET /api/articles/[slug]` | mock | Single article detail |
 | `GET /api/advisor/clients` | mock | 5 advisor clients with mismatch scores |
 
-*Falls back to mock data when Supabase is not configured.
+*Falls back to mock data when Supabase / Anthropic is not configured.
 
 ## Signal engine
 
@@ -137,29 +149,44 @@ Both share the same API routes, types, and shared components.
 
 **Caching:** Signal results are cached in-memory per investor_id with 5-min TTL. Call `invalidateSignalCache(investorId)` when user data changes.
 
-**Match percentage:** `computeMatchPercentage(product, actualTolerance, signals)` in `lib/signals.ts`.
-- Base: `100 - |product_risk_level - actual_tolerance| × 20`
-- Penalties: holding deviation + long-term product (-15/-8), panic selling + high-volatility R4+ (-15/-8), external dependency (-10/-5), liquidity conflict + illiquid product (-15/-8)
-- Floor: 5 (never returns 0)
+**Match percentage on check detail page** is **LLM-driven** (Claude Haiku 4.5 in `lib/llm.ts`). The system prompt instructs the model to anchor on `|product.risk_level − actual_tolerance| × 20` and apply behavioral signal penalties, then settle the final score.
 
-## TODO: Dimension calculation (pending PM alignment)
+**Match percentage on dashboard / history lists** prefers cached LLM scores from `check_results`. When no cache hit, falls back to rule-based `computeMatchPercentage(product, actualTolerance, signals)` and the response carries `isEstimate=true` so the UI can dim it + show a `?` tooltip.
 
-The 5 profile dimensions currently use a preliminary mapping from signals. The exact calculation logic needs to be confirmed with PM before finalizing:
+Rule-based fallback formula:
+- Base: `100 − |product_risk_level − actual_tolerance| × 20`
+- Penalties: holding deviation + long-term product (-15/-8), panic selling + R4+ (-15/-8), external dependency (-10/-5), liquidity conflict + illiquid product (-15/-8)
+- Floor: 5
 
-| Dimension | Current self source | Current observed source | Open questions |
-|-----------|-------------------|----------------------|----------------|
-| Risk Tolerance | `self_risk_level` (step 2) | Panic sell signal (inverted) | Should actual_tolerance from CSV also factor in? |
-| Holding Patience | `stated_horizon` (step 3) | Holding deviation signal (inverted) | Threshold tuning needed? |
-| Decision Independence | Hardcoded 75 | External dependency signal (inverted) | No self-reported question maps here — add one, or derive from data? |
-| Volatility Comfort | `stated_max_loss` (step 5) | Panic sell signal (inverted) | Overlaps with Risk Tolerance — should they share the same signal or differentiate? |
-| Liquidity Readiness | `has_short_term_cash_need` (step 7) | Liquidity conflict signal (inverted) | Should account_size / monthly_spending also factor in? |
+## AI integration
 
-**Action items:**
-- [ ] Confirm dimension definitions and calculation formulas with PM
-- [ ] Decide whether Decision Independence needs a self-assessment question
-- [ ] Clarify how Risk Tolerance vs Volatility Comfort should differ
-- [ ] Determine if Liquidity Readiness should incorporate financial profile fields
-- [ ] Set radar chart value ranges and normalization rules
+- **Model**: `claude-haiku-4-5-20251001` (Sonnet 4.6 swappable in `lib/llm.ts`)
+- **Structured output**: Anthropic `tool_use` with a JSON schema that locks 8 output fields
+- **Prompt cache**: system prompt marked `cache_control: ephemeral` (5-min TTL) — repeat calls within 5 min reuse cached prefix
+- **2-tier cache**: in-memory L1 (30 min) + Supabase `check_results` L2 (24h). Same `(investor_id, ticker)` returns the exact same JSON for 24h, avoiding both cost and inconsistency between dashboard and detail page.
+- **Cost**: ~$0.005 per uncached call (Haiku), ~$0.001-0.002 with prompt cache hit. Demo budget: ≤ $5/day for 500 simulated users.
+
+See [TECH.md §5–6](TECH.md) for the full system prompt, schema, and cache flow.
+
+## 5-dimension radar (current implementation)
+
+Aligned with PM.md / temp.md "twin polygons, gap = mismatch" model. Each axis maps both self and observed onto 0-100. See [TECH.md §4](TECH.md) for the full formulas.
+
+| Dimension | self source | observed source |
+|---|---|---|
+| Risk Tolerance | `self_risk_level × 20` | `actual_tolerance × 20` (CSV-derived) |
+| Holding Patience | `stated_horizon` mapped (20/40/60/80/95) | `medianHoldDays` bucketed (10/25/45/65/80/95) |
+| Decision Independence | `expValue + literacyBonus` (proxy) | `selfBuyRate × 100` |
+| Volatility Comfort | `stated_max_loss` mapped (20/40/60/80/95) | `100 − (smallDipRate + panicRate)/2 × 100` |
+| Liquidity Readiness | `has_short_term_cash_need ? 30 : 80` | no need → 100; else `100 − illiquidBuyRate × 100` |
+
+**Items still pending PM confirmation** (see [TECH.md §9](TECH.md) for full punch list):
+- [ ] Decision Independence self side: keep proxy or add a dedicated onboarding question?
+- [ ] Liquidity self uses only the boolean — Q7 has 4 options. Add `liquidity_awareness` column?
+- [ ] Q1 (investment_goal) and Q6 (target_gain) saved but unused — should they feed into any dimension?
+- [ ] LLM-driven Match anchor formula not in any PM doc — confirm acceptance
+- [ ] Tier thresholds: PM.md says ≥70/30-69/<30; current code judges by signal counts (≥3 high → mismatch)
+- [ ] Radar dot color: current uses gap magnitude (teal/amber/coral). PM.md hints at self=blue / obs=orange. Pick one.
 
 ## Design system
 
@@ -200,12 +227,24 @@ These rules apply to any AI-generated explanation text in the app:
 | Final | May 25, 2026 | Guardrails, polish, demo-ready |
 | Presentation | June 1, 2026 | Final demo |
 
-## Environment variables needed (when Supabase is connected)
+## Environment variables
+
+Required for full functionality (set both locally in `app-nextjs/.env.local` and on Vercel):
 
 ```
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 ANTHROPIC_API_KEY=
-OPENAI_API_KEY=
+# OPENAI_API_KEY=    # Only when RAG is wired up (text-embedding-3-small)
 ```
+
+Without `ANTHROPIC_API_KEY` the check API gracefully falls back to a rule-based placeholder. Without Supabase keys the entire app degrades to mock fixtures.
+
+## Database setup
+
+Run migrations in order in Supabase SQL Editor:
+1. [00001_create_tables.sql](app-nextjs/supabase/migrations/00001_create_tables.sql) — investors / products / transactions
+2. [00002_create_check_results.sql](app-nextjs/supabase/migrations/00002_create_check_results.sql) — LLM cache table
+
+Then locally: `cd app-nextjs && npm run seed` to load CSVs (default password for all seeded users: `vett2026`).

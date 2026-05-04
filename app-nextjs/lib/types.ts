@@ -41,6 +41,7 @@ export interface TrendingProduct {
   name: string;
   riskLevel: RiskLevel;
   matchPercentage: number;
+  isEstimate?: boolean;
 }
 
 export interface TrendingResponse {
@@ -102,6 +103,7 @@ export interface HistoryItem {
   name: string;
   riskLevel: RiskLevel;
   matchPercentage: number;
+  isEstimate?: boolean;
 }
 
 export interface HistoryResponse {

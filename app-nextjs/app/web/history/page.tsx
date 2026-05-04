@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, HelpCircle } from "lucide-react";
 import { WebHeader } from "@/components/web/WebHeader";
 import type { HistoryItem, HistoryResponse } from "@/lib/types";
 
@@ -51,7 +51,16 @@ export default function WebHistoryPage() {
                       {item.riskLevel}
                     </span>
                   </td>
-                  <td className="px-5 py-3.5"><span style={{ fontFamily: "var(--font-outfit)", fontSize: "18px", fontWeight: 700, color: getMatchColor(item.matchPercentage) }}>{item.matchPercentage}%</span></td>
+                  <td className="px-5 py-3.5">
+                    <span
+                      title={item.isEstimate ? "Estimate. Open this product to run the full AI check." : ""}
+                      className="inline-flex items-center gap-1"
+                      style={{ fontFamily: "var(--font-outfit)", fontSize: "18px", fontWeight: 700, color: getMatchColor(item.matchPercentage), opacity: item.isEstimate ? 0.55 : 1 }}
+                    >
+                      {item.matchPercentage}%
+                      {item.isEstimate && <HelpCircle className="w-3.5 h-3.5" />}
+                    </span>
+                  </td>
                 </tr>
               ))}
             </tbody>

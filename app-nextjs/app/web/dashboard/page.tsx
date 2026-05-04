@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search } from "lucide-react";
+import { Search, HelpCircle } from "lucide-react";
 import { WebHeader } from "@/components/web/WebHeader";
 import { ProfileRadarChart } from "@/components/shared/RadarChart";
 import { FitnessProgressBar } from "@/components/shared/FitnessProgressBar";
@@ -129,7 +129,16 @@ export default function WebDashboardPage() {
                             {p.riskLevel}
                           </span>
                         </td>
-                        <td className="px-5 py-3.5"><span style={{ fontFamily: "var(--font-outfit)", fontSize: "18px", fontWeight: 700, color: getMatchColor(p.matchPercentage) }}>{p.matchPercentage}%</span></td>
+                        <td className="px-5 py-3.5">
+                          <span
+                            title={p.isEstimate ? "Estimate. Open this product to run the full AI check." : ""}
+                            className="inline-flex items-center gap-1"
+                            style={{ fontFamily: "var(--font-outfit)", fontSize: "18px", fontWeight: 700, color: getMatchColor(p.matchPercentage), opacity: p.isEstimate ? 0.55 : 1 }}
+                          >
+                            {p.matchPercentage}%
+                            {p.isEstimate && <HelpCircle className="w-3.5 h-3.5" />}
+                          </span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -156,7 +165,16 @@ export default function WebDashboardPage() {
                         <td className="px-5 py-3.5"><span style={{ fontFamily: "var(--font-outfit)", fontSize: "15px", fontWeight: 600, color: "#0A0A0A" }}>{h.ticker}</span></td>
                         <td className="px-5 py-3.5"><span style={{ fontFamily: "var(--font-outfit)", fontSize: "13px", color: "#888888" }}>{h.name}</span></td>
                         <td className="px-5 py-3.5"><span style={{ fontFamily: "var(--font-outfit)", fontSize: "11px", color: "#AAAAAA" }}>{h.date}</span></td>
-                        <td className="px-5 py-3.5"><span style={{ fontFamily: "var(--font-outfit)", fontSize: "18px", fontWeight: 700, color: getMatchColor(h.matchPercentage) }}>{h.matchPercentage}%</span></td>
+                        <td className="px-5 py-3.5">
+                          <span
+                            title={h.isEstimate ? "Estimate. Open this product to run the full AI check." : ""}
+                            className="inline-flex items-center gap-1"
+                            style={{ fontFamily: "var(--font-outfit)", fontSize: "18px", fontWeight: 700, color: getMatchColor(h.matchPercentage), opacity: h.isEstimate ? 0.55 : 1 }}
+                          >
+                            {h.matchPercentage}%
+                            {h.isEstimate && <HelpCircle className="w-3.5 h-3.5" />}
+                          </span>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

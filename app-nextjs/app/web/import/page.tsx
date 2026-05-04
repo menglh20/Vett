@@ -35,7 +35,7 @@ export default function WebImportPage() {
         </div>
         <button onClick={() => router.push("/web/dashboard")} className="w-full text-center"
           style={{ fontFamily: "var(--font-outfit)", fontSize: "15px", color: "#888888", textDecoration: "underline" }}>
-          Skip for now — use demo data
+          Skip for now
         </button>
       </div>
     </div>
